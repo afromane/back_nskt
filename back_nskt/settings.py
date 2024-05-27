@@ -45,7 +45,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     #'detect_violence',
     'setting',
-    #'individual_search',
+    'individual_search',
     'corsheaders', # Pour resoudre le probleme du cors
     'djongo',# database
 ]

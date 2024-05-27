@@ -7,16 +7,77 @@ from setting.models import Camera as Camera
 from django.db.models import Count
 
 from djongo.models import ObjectIdField
-from bson import ObjectId  # Import ObjectId from bson
 from bson import ObjectId
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
 from django.utils import timezone
 from django.db.models import Count
-from .FacialRecognition import FacialRecognition
+from .FaceMatcher import FaceMatcher
 from collections import defaultdict
-from django.shortcuts import get_object_or_404
 
+""""
+        VIDEO FROM RECORDED
+"""
+
+@csrf_exempt
+def recordedvideo(request):
+    if request.method == 'POST':
+        if request.FILES or request.POST:
+            
+            #upload video file
+            video_file= request.FILES['video']
+            video_dir = 'static/videos/'
+            os.makedirs(video_dir, exist_ok=True)
+            video_path = os.path.join(video_dir,video_file.name)
+            fs = FileSystemStorage(location = video_dir)
+            filename = fs.save(video_file.name,video_file)
+
+            #upload image file
+            image_file= request.FILES['image']
+            image_dir = 'static/profiles/'
+            os.makedirs(image_dir, exist_ok=True)
+            image_path = os.path.join(image_dir, image_file.name)
+            fs = FileSystemStorage(location = image_dir)
+            filename = fs.save(image_file.name,image_file)
+            faceMatcher = FaceMatcher()
+            faceMatcher.search_in_video( image_path, video_path)
+            threshold = request.POST.get('seuil')
+            description = request.POST.get('description')
+
+                         #save to database
+            """ 
+            recorded_video  = RecordedVideo.objects.create(
+                # name = name,
+                description = description,
+                video_path = video_path,
+                image_path = image_path,
+            )
+            
+            recognizer = FacialRecognition(threshold=threshold)
+            image  = cv2.imread(image_path)
+            detected_time, similarity_list,output_file_path,RECOGNITION_FRAME_PATH = recognizer.find_image_in_video(image, video_path)
+            recorded_result  = IndividualSearchFromRecordedVideo.objects.create(
+                threshold = threshold,
+                similarity = similarity_list,
+                path_video = output_file_path,
+                detected_time = detected_time,
+                recorded_video = recorded_video,
+                recognition_path =RECOGNITION_FRAME_PATH
+                        )
+            latest_event = IndividualSearchFromRecordedVideo.objects.order_by('-createdAt').first() """
+            return JsonResponse( {
+                'message': 'Form data received successfully',
+                
+               # 'id' : str(latest_event._id)
+                'id' : "cool"
+                
+                }, status=200)
+        else:
+            return JsonResponse({'error': 'No form data received'}, status=400)
+    else:
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+"""
 def home(request):
     camera1 = Camera.objects.get(_id=ObjectId("664f0d92cbae66277a8bfb4f"))
     camera2 = Camera.objects.get(_id=ObjectId("664f0db8cbae66277a8bfb50"))
@@ -155,14 +216,14 @@ def camerastream(request):
                 os.makedirs(image_dir, exist_ok=True)
                 filename =image_dir+datetime.now().time()+'.jpg'
                 cv2.imwrite(filename, frame)
-                """ recorded_video  = CameraStreamResult.objects.create(
+                recorded_video  = CameraStreamResult.objects.create(
                 duration = max_duration,
                 threshold = threshold,
                 similarity = similarity_list,
                 path_image = output_file_path,
                 detected_time = detected_time,
                 recorded_video = recorded_video
-                        ) """
+                        ) 
 
             ret, jpeg = cv2.imencode('.jpg', frame)
             frame_bytes = jpeg.tobytes()
@@ -297,12 +358,12 @@ def get_folder_content(request, folder_path):
 
     return JsonResponse({
                 'images': image_paths
-                }, status=200)
+                }, status=200) """
 
 """"
        ENDPOINTS TRACKER INDIVIDUAL
 """
-
+""" 
 def getAllActifSearchFromCameraStream(request):
     # Récupérer tous les individus avec le statut "actif"
     individus_actifs = ProfileIndividu.objects.filter(status="actif")
@@ -352,7 +413,7 @@ def get_searches_by_individu(request, individu_id):
         results_list.append(result_dict)
 
     return JsonResponse(results_list, safe=False)
-
+ """
 
 """"
         SAVING PROFILE
@@ -362,7 +423,7 @@ def saveProfile(request):
     if request.method == 'POST':
         if request.FILES or request.POST:
             files = request.FILES.getlist('files')
-            upload_dir = 'static/profile/'
+            upload_dir = 'static/profiles/'
             os.makedirs(upload_dir, exist_ok=True)
 
             fs = FileSystemStorage(location = upload_dir)
@@ -374,9 +435,8 @@ def saveProfile(request):
                 path = upload_dir+filename
             )
 
-
             return JsonResponse({
-                'message': 'Form data received successfully',
+                'message': 'Record successfully',
                 "status" :200
                 }, status=200)
         else:
@@ -402,8 +462,8 @@ def getAllProfile(request):
     
     return JsonResponse(results_list, safe=False)
 def get_image_with_path(request):
+  
     image_path = request.GET.get("path")
-
     if os.path.exists(image_path):
         with open(image_path, 'rb') as image_file:
             # Determine the content type based on the file extension
