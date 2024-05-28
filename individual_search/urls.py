@@ -4,17 +4,22 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    #path('test', views.home ),
+   # path('test', views.video_from_camera ),
     path('recordedvideo', views.recordedvideo ),
+    path('uploadrecordedvideo', views.upload_recorded_video ),
+    path('getRecordedVideoById/<str:itemId>', views.get_recorded_video_by_id ),
+    path('getRecordedVideoById/<str:itemId>', views.get_recorded_video_by_id ),
+    path('analysisFromRecordedVideo/<str:itemId>', views.analysis_from_recorded_video ),
+    path('getAllResultFromRecordedVideo',views.getAllResultFromRecordedVideo),
+    path('getResultFromRecordedVideo/<str:event_id>', views.getResultFromRecordedVideo),
+
     #path('camerastream', views.camerastream ),
     #path('getDayFindFromCamera', views.getDayFindFromCamera ),
     #path('getAllFromCamera', views.getAllFromCamera ),
     #path('getStatistiquePerMonth', views.getStatistiquePerMonth ),
-     #path('getResultFromRecordedVideo/<str:event_id>', views.getResultFromRecordedVideo),
     #path('loadVideo',views.serve_video),
     #path('loadImage',views.serve_image),
     
-    #path('getAllResultFromRecordedVideo',views.getAllResultFromRecordedVideo),
     #path('getFolderContent/<str:folder_path>', views.get_folder_content),
     path('loadImageWithPath',views.get_image_with_path),
 
