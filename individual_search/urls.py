@@ -15,7 +15,10 @@ urlpatterns = [
     path('getFolderContentWithPath', views.get_folder_content_with_path),
     path('loadVideoWithPath',views.serve_video_with_path),
 
-    path('searchIndividuBySecteur', views.search_individu_by_secteur ),
+    #path('searchIndividuBySecteur', views.search_individu_by_secteur ),
+    path('searchIndividuByCamera', views.search_individu_by_camera ),
+
+    path('getCameraBySecteurName', views.get_cameras_by_secteur_name ),
     #path('getDayFindFromCamera', views.getDayFindFromCamera ),
     #path('getAllFromCamera', views.getAllFromCamera ),
     #path('getStatistiquePerMonth', views.getStatistiquePerMonth ),

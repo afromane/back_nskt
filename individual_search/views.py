@@ -2,22 +2,17 @@ from django.http import HttpResponse, JsonResponse,StreamingHttpResponse,HttpRes
 import os
 from django.views.decorators.csrf import csrf_exempt
 import cv2
-from .models import RecordedVideo,CameraStreamResult,IndividualSearchFromRecordedVideo,ProfileIndividu,IndividualSearchFromCameraStream
-from setting.models import Camera as Camera
-from django.db.models import Count
+from .models import RecordedVideo,IndividualSearchFromRecordedVideo,ProfileIndividu,IndividualSearchFromCameraStream
+from setting.models import Camera 
 
-from djongo.models import ObjectIdField
 from bson import ObjectId
-from django.conf import settings
 from django.core.files.storage import FileSystemStorage
-from django.utils import timezone
-from django.db.models import Count
 from .FaceMatcher import FaceMatcher
-from collections import defaultdict
 import face_recognition
 from datetime import datetime
-
-
+from setting.models import Secteur
+import json
+import concurrent.futures
 def video_from_camera1(request):
     faceMatcher = FaceMatcher()
     
@@ -364,8 +359,10 @@ def serve_video_with_path(request):
     else:
         return HttpResponse('La vidéo demandée n\'existe pas', status=404)
 
+
+
 @csrf_exempt
-def search_individu_by_secteur(request):
+def search_individu_by_camera1(request):
     video_url = 'http://'+request.GET.get('video_url')+'/video'
     faceMatcher = FaceMatcher()
 
@@ -379,12 +376,11 @@ def search_individu_by_secteur(request):
             if not ret:
                 break
             frame, similarities = faceMatcher.match_faces(frame)
-            frame, similarities = faceMatcher.match_faces(frame)
             if similarities:
                 current_date = datetime.now().strftime("%Y-%m-%d")
                 frame_path = f'static/person_found/{current_date}/{video_url_param}'
                 #save_frame(frame, frame_path)
-                """ 
+                """
                 try:
                     recorded_result = IndividualSearchFromRecordedVideo.objects.get(recorded_video=recorded)
                     recorded_result.similarity.extend(similarities)
@@ -410,11 +406,106 @@ def search_individu_by_secteur(request):
     if video_url_param:
         video_url = 'http://' + video_url_param + '/video'
         reference_image_path = "static/profiles/manel.jpeg"
-
+        # Récupérer tous les individus avec le statut "actif"
+        
         return StreamingHttpResponse(generate_video(video_url,video_url_param,reference_image_path), content_type='multipart/x-mixed-replace; boundary=frame')
     else:
         # Gérer le cas où le paramètre video_url est absent ou None
         return HttpResponseBadRequest("Missing or invalid 'video_url' parameter")
+
+@csrf_exempt
+def search_individu_by_camera(request):
+    video_url = 'http://'+request.GET.get('video_url')+'/video'
+
+    def generate_video(video_url, video_url_param, individus_actifs):
+        cap = cv2.VideoCapture(video_url)
+        faceMatcher = FaceMatcher()
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            for individu in individus_actifs:
+                reference_image_path = individu.path
+                faceMatcher.reference_image = face_recognition.load_image_file(reference_image_path)
+                faceMatcher.reference_encoding = face_recognition.face_encodings(faceMatcher.reference_image)[0]
+
+                frame, similarities = faceMatcher.match_faces(frame)
+                if similarities:
+                    current_date = datetime.now().strftime("%Y-%m-%d")
+                    reference_name = reference_image_path.split('/')[-1].split('.')[0]
+                    frame_path = f'static/person_found/{current_date}/{video_url_param}/{reference_name}'
+                    save_frame(frame, frame_path)
+                    
+                    try:
+                        result = IndividualSearchFromCameraStream.objects.get(individu=individu)
+                        result.similarity.extend(similarities)
+                        result.detected_time.append(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+                        result.save() 
+                    except IndividualSearchFromCameraStream.DoesNotExist:
+                        IndividualSearchFromCameraStream.objects.create(
+                             similarity = similarities,
+                             path_frame = frame_path,
+                             camera = IndividualSearchFromCameraStream.objects.get(url=video_url_param),
+                             individu = individu
+                        ) 
+            ret, jpeg = cv2.imencode('.jpg', frame)
+            frame_bytes = jpeg.tobytes()
+
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+    video_url_param = request.GET.get('video_url')
+    if video_url_param:
+        video_url = 'http://' + video_url_param + '/video'
+        reference_image_paths =[]
+        # Récupérer tous les individus avec le statut "actif"
+        individus_actifs = ProfileIndividu.objects.filter(status="actif")
+        reference_image_paths = [individu.path for individu in individus_actifs]
+        
+        return StreamingHttpResponse(generate_video(video_url,video_url_param,individus_actifs), content_type='multipart/x-mixed-replace; boundary=frame')
+    else:
+        # Gérer le cas où le paramètre video_url est absent ou None
+        return HttpResponseBadRequest("Missing or invalid 'video_url' parameter")
+
+
+@csrf_exempt
+def get_cameras_by_secteur_name(request):
+    # Get the 'secteur_names' parameter from the request
+    secteur_names = request.POST.get('secteur')
+    # Check if 'secteur_names' parameter is provided
+    if not secteur_names:
+        return HttpResponseBadRequest("Missing 'secteur_names' parameter")
+
+    try:
+        # Attempt to parse secteur_names as a JSON array
+        secteur_names = json.loads(secteur_names)
+        if not isinstance(secteur_names, list):
+            raise json.JSONDecodeError
+    except json.JSONDecodeError:
+        # If it's not a valid JSON array, assume it's a comma-separated string
+        secteur_names = secteur_names.split(',')
+
+    # Strip whitespace from each sector name
+    secteur_names = [name.strip() for name in secteur_names]
+
+    # Retrieve the sectors with the provided names
+    secteurs = Secteur.objects.filter(name__in=secteur_names)
+
+    # Retrieve the cameras associated with the retrieved sectors
+    cameras = Camera.objects.filter(secteur__in=secteurs)
+    
+    # Prepare the response data
+    cameras_data = [{
+        "_id": str(camera._id),
+        "name": camera.name,
+        "url": camera.url,
+        "secteur": camera.secteur.name,
+    } for camera in cameras]
+
+    # Return the response data as JSON
+    return JsonResponse(cameras_data, safe=False)
+
 
 
 """
