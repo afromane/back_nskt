@@ -45,7 +45,7 @@ class IndividualSearchFromRecordedVideo(models.Model):
     similarity = JSONField(default=list)
     path_video = models.TextField(blank=True)
     recognition_path = models.TextField(blank=True)
-    #detected_time = JSONField(default=list)
+    detected_time = JSONField(default=list)
     createdAt = models.DateTimeField(auto_now_add=True, blank=True)
     recorded_video = models.ForeignKey('RecordedVideo', on_delete=models.CASCADE)
 
@@ -73,7 +73,7 @@ class IndividualSearchFromCameraStream(models.Model):
     Modèle de base pour enregistrer les recherche issu des camera.
     """
     _id = models.ObjectIdField(primary_key=True)
-    similarity = models.TextField(blank=True)
+    similarity = JSONField(default=list)
     path_frame = models.TextField(blank=True)
     createdAt = models.DateTimeField(auto_now_add=True, blank=True)
     individu = models.ForeignKey('ProfileIndividu', on_delete=models.CASCADE)

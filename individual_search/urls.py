@@ -4,7 +4,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-   # path('test', views.video_from_camera ),
+   path('test', views.video_from_camera1 ),
     path('recordedvideo', views.recordedvideo ),
     path('uploadrecordedvideo', views.upload_recorded_video ),
     path('getRecordedVideoById/<str:itemId>', views.get_recorded_video_by_id ),
@@ -12,12 +12,13 @@ urlpatterns = [
     path('analysisFromRecordedVideo/<str:itemId>', views.analysis_from_recorded_video ),
     path('getAllResultFromRecordedVideo',views.getAllResultFromRecordedVideo),
     path('getResultFromRecordedVideo/<str:event_id>', views.getResultFromRecordedVideo),
+    path('getFolderContentWithPath', views.get_folder_content_with_path),
+    path('loadVideoWithPath',views.serve_video_with_path),
 
-    #path('camerastream', views.camerastream ),
+    path('searchIndividuBySecteur', views.search_individu_by_secteur ),
     #path('getDayFindFromCamera', views.getDayFindFromCamera ),
     #path('getAllFromCamera', views.getAllFromCamera ),
     #path('getStatistiquePerMonth', views.getStatistiquePerMonth ),
-    #path('loadVideo',views.serve_video),
     #path('loadImage',views.serve_image),
     
     #path('getFolderContent/<str:folder_path>', views.get_folder_content),

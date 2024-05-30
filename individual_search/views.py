@@ -15,61 +15,136 @@ from django.db.models import Count
 from .FaceMatcher import FaceMatcher
 from collections import defaultdict
 import face_recognition
+from datetime import datetime
 
+
+def video_from_camera1(request):
+    faceMatcher = FaceMatcher()
+    
+    def generate_video(video_path, reference_image_path, frame_rate=5):
+        cap = cv2.VideoCapture(video_path)
+        faceMatcher.reference_image = face_recognition.load_image_file(reference_image_path)
+        faceMatcher.reference_encoding = face_recognition.face_encodings(faceMatcher.reference_image)[0]
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame, similarity = faceMatcher.match_faces(frame)
+            print(similarity)
+
+            ret, jpeg = cv2.imencode('.jpg', frame)
+            if not ret:
+                continue
+
+            frame_bytes = jpeg.tobytes()
+
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+        cap.release()
+
+    video_path = "http://192.168.100.5:4747/video"
+    reference_image_path = "static/profiles/manel.jpeg"
+    
+    return StreamingHttpResponse(generate_video(video_path, reference_image_path, frame_rate=5), content_type='multipart/x-mixed-replace; boundary=frame')
+   
 """"
         VIDEO FROM RECORDED
 """
 
 @csrf_exempt
 def recordedvideo(request):
+    def analysis(video_path, reference_image_path, recorded_video, frame_skip=2):
+        faceMatcher = FaceMatcher()
+        cap = cv2.VideoCapture(video_path)
+        faceMatcher.reference_image = face_recognition.load_image_file(reference_image_path)
+        faceMatcher.reference_encoding = face_recognition.face_encodings(faceMatcher.reference_image)[0]
+
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        video_base_name = os.path.basename(video_path)
+        video_name, _ = os.path.splitext(video_base_name)
+
+        # Ensure the output directory exists
+        if not os.path.exists("static/video_analysis"):
+            os.makedirs("static/video_analysis")
+     
+        # Generate the output video path
+        current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        output_video_path = f"static/video_analysis/{video_name}_{current_time}.mp4"
+        
+        # Define the codec and create VideoWriter object
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # H.264 codc
+        out = cv2.VideoWriter(output_video_path, fourcc, fps // frame_skip, (frame_width, frame_height))
+        if not out.isOpened():
+            print("Error: Could not open VideoWriter.")
+            return
+    
+        frame_count = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_count % frame_skip == 0:
+                frame, similarities = faceMatcher.match_faces(frame)
+                if similarities:
+                    
+                    frame_path = f'static/person_found/{video_name}'
+                    save_frame(frame, frame_path)
+                    
+                    try:
+                        recorded_result = IndividualSearchFromRecordedVideo.objects.get(recorded_video=recorded_video)
+                        recorded_result.similarity.extend(similarities)
+                        recorded_result.detected_time.append(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+                        recorded_result.save()
+                    except IndividualSearchFromRecordedVideo.DoesNotExist:
+                        IndividualSearchFromRecordedVideo.objects.create(
+                            similarity=similarities,
+                            recorded_video=recorded_video,
+                            recognition_path=frame_path,
+                            path_video =output_video_path,
+                            detected_time=[cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0]
+
+                        )
+                
+                out.write(frame)
+
+            frame_count += 1
+
+        cap.release()
+        out.release()
     if request.method == 'POST':
         if request.FILES or request.POST:
-            
             #upload video file
             video_file= request.FILES['video']
             video_dir = 'static/videos/'
             os.makedirs(video_dir, exist_ok=True)
-            video_path = os.path.join(video_dir,video_file.name)
             fs = FileSystemStorage(location = video_dir)
-            filename = fs.save(video_file.name,video_file)
+            filename_video = fs.save(video_file.name,video_file)
 
             #upload image file
             image_file= request.FILES['image']
             image_dir = 'static/profiles/'
             os.makedirs(image_dir, exist_ok=True)
-            image_path = os.path.join(image_dir, image_file.name)
             fs = FileSystemStorage(location = image_dir)
-            filename = fs.save(image_file.name,image_file)
-            faceMatcher = FaceMatcher()
-            faceMatcher.search_in_video( image_path, video_path)
-            description = request.POST.get('description')
-
-                         #save to database
-            """ 
+            filename_image = fs.save(image_file.name,image_file)
             recorded_video  = RecordedVideo.objects.create(
                 # name = name,
-                description = description,
-                video_path = video_path,
-                image_path = image_path,
+                description = request.POST.get('description'),
+                video_path = video_dir+filename_video,
+                image_path = image_dir+filename_image,
             )
-            
-            recognizer = FacialRecognition(threshold=threshold)
-            image  = cv2.imread(image_path)
-            detected_time, similarity_list,output_file_path,RECOGNITION_FRAME_PATH = recognizer.find_image_in_video(image, video_path)
-            recorded_result  = IndividualSearchFromRecordedVideo.objects.create(
-                threshold = threshold,
-                similarity = similarity_list,
-                path_video = output_file_path,
-                detected_time = detected_time,
-                recorded_video = recorded_video,
-                recognition_path =RECOGNITION_FRAME_PATH
-                        )
-            latest_event = IndividualSearchFromRecordedVideo.objects.order_by('-createdAt').first() """
+            video_path =video_dir+filename_video
+            reference_image_path = image_dir+filename_image
+            analysis(video_path, reference_image_path, recorded_video,frame_skip=2)
+            latest_event = IndividualSearchFromRecordedVideo.objects.order_by('-createdAt').first() 
             return JsonResponse( {
                 'message': 'Form data received successfully',
-                
-               # 'id' : str(latest_event._id)
-                'id' : "cool"
+                'id' : str(latest_event._id)
                 
                 }, status=200)
         else:
@@ -138,13 +213,13 @@ def save_frame(frame, directory):
 
 @csrf_exempt
 def analysis_from_recorded_video(request,itemId):
-    faceMatcher = FaceMatcher()
     recorded = RecordedVideo.objects.get(_id=ObjectId(itemId))
     video_path =  recorded.video_path
     reference_image_path = recorded.image_path
     
     
     def generate_video(video_path, reference_image_path, frame_skip=2):
+        faceMatcher = FaceMatcher()
         cap = cv2.VideoCapture(video_path)
         faceMatcher.reference_image = face_recognition.load_image_file(reference_image_path)
         faceMatcher.reference_encoding = face_recognition.face_encodings(faceMatcher.reference_image)[0]
@@ -153,51 +228,66 @@ def analysis_from_recorded_video(request,itemId):
         frame_interval = int(fps / 10)  # Traiter un certain nombre de trames par seconde
         frame_count = 0
 
-               
+            
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        video_base_name = os.path.basename(video_path)
+        video_name, _ = os.path.splitext(video_base_name)
+
+        # Ensure the output directory exists
+        if not os.path.exists("static/video_analysis"):
+            os.makedirs("static/video_analysis")
+     
+        # Generate the output video path
+        current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        output_video_path = f"static/video_analysis/{video_name}_{current_time}.mp4"
         
+        # Define the codec and create VideoWriter object
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # H.264 codc
+        out = cv2.VideoWriter(output_video_path, fourcc, fps // frame_skip, (frame_width, frame_height))
+        if not out.isOpened():
+            print("Error: Could not open VideoWriter.")
+            return
+    
+        frame_count = 0
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            #if frame_count % frame_interval == 0:
-            frame, similarity = faceMatcher.match_faces(frame)
-            if similarity is not None:
-                video_base_name = os.path.basename(video_path)
-                video_name, _ = os.path.splitext(video_base_name)
+            #if frame_count % frame_skip == 0:
+            frame, similarities = faceMatcher.match_faces(frame)
+            if similarities:
+                
                 frame_path = f'static/person_found/{video_name}'
-                save_frame(frame,frame_path)
-                """ recorded_result  = IndividualSearchFromRecordedVideo.objects.create(
-                similarity = similary,
-                #path_video = output_file_path,
-                #detected_time = detected_time,
-                recorded_video = recorded,
-                recognition_path =output_file_path
-                        ) """
-                # Check if the recorded result already exists
+                save_frame(frame, frame_path)
+                
                 try:
                     recorded_result = IndividualSearchFromRecordedVideo.objects.get(recorded_video=recorded)
-                    # If it exists, update the similarity and recognition_path
-                    for sim in similarity:
-                     recorded_result.similarity.append(sim)
-                     recorded_result.save()
+                    recorded_result.similarity.extend(similarities)
+                    recorded_result.detected_time.append(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+                    recorded_result.save()
                 except IndividualSearchFromRecordedVideo.DoesNotExist:
-                    # If it doesn't exist, create a new entry
                     IndividualSearchFromRecordedVideo.objects.create(
-                        similarity=[similarity],
+                        similarity=similarities,
                         recorded_video=recorded,
-                        recognition_path=frame_path
-                    )
+                        recognition_path=frame_path,
+                        path_video =output_video_path,
+                        detected_time=[cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0]
 
+                    )
             ret, jpeg = cv2.imencode('.jpg', frame)
             frame_bytes = jpeg.tobytes()
 
-            yield (b'--frame\r\n'
-                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            yield (b'--frame\r\n'b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-            frame_count += frame_skip  # Sauter des trames
+            out.write(frame)
+
+            frame_count += 1
 
         cap.release()
+        out.release()
     
     return StreamingHttpResponse(generate_video(video_path, reference_image_path,frame_skip=2), content_type='multipart/x-mixed-replace; boundary=frame') 
 
@@ -241,13 +331,91 @@ def getResultFromRecordedVideo(request, event_id):
             'original_image' : item.recorded_video.image_path,
             'original_video' : item.recorded_video.video_path,
             'createdAt' : item.createdAt,
-            #'detected_time' : item.detected_time,
+            'detected_time' : item.detected_time,
             'similarity' : item.similarity,
         }
 
         return JsonResponse(response_data)
     except IndividualSearchFromRecordedVideo.DoesNotExist:
-        return JsonResponse({'error': 'IndividualSearchFromRecordedVideo not found'}, status=404)
+        return JsonResponse({'error': 'items not found'}, status=404)
+
+def get_folder_content_with_path(request):
+    directory = request.GET.get("path")
+
+    image_paths = []
+    for filename in os.listdir(directory):
+        file_path = os.path.join(directory, filename)
+
+        if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
+            image_paths.append(file_path)
+
+    return JsonResponse({
+                'images': image_paths
+                }, status=200) 
+def serve_video_with_path(request):
+    # Chemin vers le fichier vidéo
+    video_path = request.GET.get('path')
+    # Vérifie si le fichier vidéo existe
+    if os.path.exists(video_path):
+        with open(video_path, 'rb') as video_file:
+            response = HttpResponse(video_file.read(), content_type='video/mp4')
+            response['Content-Disposition'] = f'inline; filename="{video_path}"'
+            return response
+    else:
+        return HttpResponse('La vidéo demandée n\'existe pas', status=404)
+
+@csrf_exempt
+def search_individu_by_secteur(request):
+    video_url = 'http://'+request.GET.get('video_url')+'/video'
+    faceMatcher = FaceMatcher()
+
+    def generate_video(video_url,video_url_param,reference_image_path):
+        cap = cv2.VideoCapture(video_url) 
+        faceMatcher.reference_image = face_recognition.load_image_file(reference_image_path)
+        faceMatcher.reference_encoding = face_recognition.face_encodings(faceMatcher.reference_image)[0]
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame, similarities = faceMatcher.match_faces(frame)
+            frame, similarities = faceMatcher.match_faces(frame)
+            if similarities:
+                current_date = datetime.now().strftime("%Y-%m-%d")
+                frame_path = f'static/person_found/{current_date}/{video_url_param}'
+                #save_frame(frame, frame_path)
+                """ 
+                try:
+                    recorded_result = IndividualSearchFromRecordedVideo.objects.get(recorded_video=recorded)
+                    recorded_result.similarity.extend(similarities)
+                    recorded_result.detected_time.append(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+                    recorded_result.save()
+                except IndividualSearchFromRecordedVideo.DoesNotExist:
+                    IndividualSearchFromRecordedVideo.objects.create(
+                        similarity=similarities,
+                        recorded_video=recorded,
+                        recognition_path=frame_path,
+                        path_video =output_video_path,
+                        detected_time=[cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0]
+
+                    ) """
+            ret, jpeg = cv2.imencode('.jpg', frame)
+            frame_bytes = jpeg.tobytes()
+
+            ret, jpeg = cv2.imencode('.jpg', frame)
+            frame_bytes = jpeg.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+    video_url_param = request.GET.get('video_url')
+    if video_url_param:
+        video_url = 'http://' + video_url_param + '/video'
+        reference_image_path = "static/profiles/manel.jpeg"
+
+        return StreamingHttpResponse(generate_video(video_url,video_url_param,reference_image_path), content_type='multipart/x-mixed-replace; boundary=frame')
+    else:
+        # Gérer le cas où le paramètre video_url est absent ou None
+        return HttpResponseBadRequest("Missing or invalid 'video_url' parameter")
+
 
 """
 
@@ -396,20 +564,6 @@ def recordedvideo(request):
 
 
 
-def serve_video(request):
-    # Chemin vers le fichier vidéo
-    #video_path = os.path.join('chemin/vers/votre/dossier/videos', video_name)
-    video_name = request.GET.get('video')
-
-    video_path = settings.BASE_DIR+"/"+video_name
-    # Vérifie si le fichier vidéo existe
-    if os.path.exists(video_path):
-        with open(video_path, 'rb') as video_file:
-            response = HttpResponse(video_file.read(), content_type='video/mp4')
-            response['Content-Disposition'] = f'inline; filename="{video_name}"'
-            return response
-    else:
-        return HttpResponse('La vidéo demandée n\'existe pas', status=404)
 
 def serve_image(request):
     # Nom du fichier image passé en paramètre GET
@@ -470,6 +624,7 @@ def camerastream(request):
     else:
         # Gérer le cas où le paramètre video_url est absent ou None
         return HttpResponseBadRequest("Missing or invalid 'video_url' parameter")
+
 
 
 

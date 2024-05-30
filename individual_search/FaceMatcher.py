@@ -25,7 +25,7 @@ class FaceMatcher:
 
         # Find all faces and their encodings in the frame
         face_locations = face_recognition.face_locations(rgb_frame)
-        # print("Number of faces detected in the frame:", len(face_locations))
+        #print("Number of faces detected in the frame:", len(face_locations))
 
         # simalary list
         similary =[]
