@@ -4,15 +4,15 @@ from django.views.decorators.csrf import csrf_exempt
 import cv2
 from .models import RecordedVideo,IndividualSearchFromRecordedVideo,ProfileIndividu,IndividualSearchFromCameraStream
 from setting.models import Camera 
-
+from django.db.models import Count
 from bson import ObjectId
 from django.core.files.storage import FileSystemStorage
 from .FaceMatcher import FaceMatcher
 import face_recognition
-from datetime import datetime
+from datetime import datetime, timedelta
 from setting.models import Secteur
 import json
-import concurrent.futures
+from django.utils import timezone
 def video_from_camera1(request):
     faceMatcher = FaceMatcher()
     
@@ -22,7 +22,6 @@ def video_from_camera1(request):
         faceMatcher.reference_encoding = face_recognition.face_encodings(faceMatcher.reference_image)[0]
 
         while True:
-            ret, frame = cap.read()
             if not ret:
                 break
 
@@ -151,7 +150,6 @@ def recordedvideo(request):
 def upload_recorded_video(request):
     if request.method == 'POST':
         if request.FILES or request.POST:
-            
             #upload video file
             video_file= request.FILES['video']
             video_dir = 'static/videos/'
@@ -302,7 +300,7 @@ def getAllResultFromRecordedVideo(request):
             'description' : item.recorded_video.description,
             'original_image' : item.recorded_video.image_path,
             'original_video' : item.recorded_video.video_path,
-            'createdAt' : item.createdAt,
+            'createdAt' : item.createdAt.strftime("%Y-%m-%d %H:%M:%S"),
             #'detected_time' : item.detected_time,
             'similarity' : item.similarity,
 
@@ -325,7 +323,7 @@ def getResultFromRecordedVideo(request, event_id):
             'description' : item.recorded_video.description,
             'original_image' : item.recorded_video.image_path,
             'original_video' : item.recorded_video.video_path,
-            'createdAt' : item.createdAt,
+            'createdAt' : item.createdAt.strftime("%Y-%m-%d %H:%M:%S"),
             'detected_time' : item.detected_time,
             'similarity' : item.similarity,
         }
@@ -412,9 +410,8 @@ def search_individu_by_camera1(request):
     else:
         # Gérer le cas où le paramètre video_url est absent ou None
         return HttpResponseBadRequest("Missing or invalid 'video_url' parameter")
-
 @csrf_exempt
-def search_individu_by_camera(request):
+def search_individu_by_camera2(request):
     video_url = 'http://'+request.GET.get('video_url')+'/video'
 
     def generate_video(video_url, video_url_param, individus_actifs):
@@ -440,13 +437,13 @@ def search_individu_by_camera(request):
                     try:
                         result = IndividualSearchFromCameraStream.objects.get(individu=individu)
                         result.similarity.extend(similarities)
-                        result.detected_time.append(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+                       # result.detected_time.append(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
                         result.save() 
                     except IndividualSearchFromCameraStream.DoesNotExist:
                         IndividualSearchFromCameraStream.objects.create(
                              similarity = similarities,
                              path_frame = frame_path,
-                             camera = IndividualSearchFromCameraStream.objects.get(url=video_url_param),
+                             camera = Camera.objects.get(url=video_url_param),
                              individu = individu
                         ) 
             ret, jpeg = cv2.imencode('.jpg', frame)
@@ -463,6 +460,56 @@ def search_individu_by_camera(request):
         individus_actifs = ProfileIndividu.objects.filter(status="actif")
         reference_image_paths = [individu.path for individu in individus_actifs]
         
+        return StreamingHttpResponse(generate_video(video_url,video_url_param,individus_actifs), content_type='multipart/x-mixed-replace; boundary=frame')
+    else:
+        # Gérer le cas où le paramètre video_url est absent ou None
+        return HttpResponseBadRequest("Missing or invalid 'video_url' parameter")
+@csrf_exempt
+def search_individu_by_camera(request):
+    video_url = 'http://'+request.GET.get('video_url')+'/video'
+    def generate_video(video_url, video_url_param, individus_actifs,):
+        cap = cv2.VideoCapture(video_url)
+        faceMatcher = FaceMatcher()
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            for individu in individus_actifs:
+                reference_image_path = individu.path
+                faceMatcher.reference_image = face_recognition.load_image_file(reference_image_path)
+                faceMatcher.reference_encoding = face_recognition.face_encodings(faceMatcher.reference_image)[0]
+
+                frame, similarities = faceMatcher.match_faces(frame)
+                if similarities:
+                    current_date = datetime.now().strftime("%Y-%m-%d")
+                    reference_name = reference_image_path.split('/')[-1].split('.')[0]
+                    frame_path = f'static/person_found/{current_date}/{video_url_param}/{reference_name}'
+                    save_frame(frame, frame_path)
+                    
+                    try:
+                        result = IndividualSearchFromCameraStream.objects.get(individu=individu)
+                        result.similarity.extend(similarities)
+                        result.detected_time.append(timezone.now().isoformat())
+                        result.save() 
+                    except IndividualSearchFromCameraStream.DoesNotExist:
+                        IndividualSearchFromCameraStream.objects.create(
+                             similarity = similarities,
+                             path_frame = frame_path,
+                             detected_time = [ timezone.now().isoformat()],
+                             camera = Camera.objects.get(url=video_url_param),
+                             individu = individu
+                        ) 
+            ret, jpeg = cv2.imencode('.jpg', frame)
+            frame_bytes = jpeg.tobytes()
+
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+    video_url_param = request.GET.get('video_url')
+    if video_url_param:
+        video_url = 'http://' + video_url_param + '/video'
+        # Récupérer tous les individus avec le statut "actif"
+        individus_actifs = ProfileIndividu.objects.filter(status="actif")
         return StreamingHttpResponse(generate_video(video_url,video_url_param,individus_actifs), content_type='multipart/x-mixed-replace; boundary=frame')
     else:
         # Gérer le cas où le paramètre video_url est absent ou None
@@ -506,7 +553,102 @@ def get_cameras_by_secteur_name(request):
     # Return the response data as JSON
     return JsonResponse(cameras_data, safe=False)
 
+def getAllActifSearchFromCameraStream(request):
+    # Récupérer tous les individus avec le statut "actif"
+    # = ProfileIndividu.objects.filter(status="actif")
+    individus_actifs = ProfileIndividu.objects.all()
 
+    # Ensuite, récupérer toutes les entrées dans IndividualSearchFromCameraStream associées à ces individus actifs
+    recherche_individus_actifs = IndividualSearchFromCameraStream.objects.filter(individu__in=individus_actifs)
+
+    # Grouper les résultats par l'identifiant unique de l'individu et compter le nombre d'occurrences
+    recherche_grouped = recherche_individus_actifs.values('individu').annotate(count=Count('individu'))
+
+    results_list = []
+    
+    for item in recherche_grouped:
+        # Récupérer les détails de l'individu pour chaque groupe
+        individu = ProfileIndividu.objects.get(_id=item['individu'])
+        
+        result_dict = {
+            "id": str(individu._id),
+            "createdAt": individu.createdAt.strftime("%Y-%m-%d %H:%M:%S"),
+            'description': individu.description,
+            'path': individu.path,
+            'status': individu.status
+        }
+        results_list.append(result_dict)
+    
+    return JsonResponse(results_list, safe=False)
+
+def get_searches_by_individu(request, individu_id):
+    individu = ProfileIndividu.objects.get(_id=ObjectId(individu_id))
+
+    # Récupérer toutes les entrées de IndividualSearchFromCameraStream pour cet individu
+    searches = IndividualSearchFromCameraStream.objects.filter(individu=individu)
+
+    # Préparer la liste des résultats à renvoyer
+    results_list = []
+    for search in searches:
+        result_dict = {
+            "id": str(search._id),
+            "similarity": search.similarity,
+            "createdAt": search.createdAt.strftime("%Y-%m-%d %H:%M:%S"),
+            "path_frame": search.path_frame,
+            "cameraName": search.camera.name,
+            "long": search.camera.longitude,
+            "lat": search.camera.latitude,
+            "secteur": search.camera.secteur.name,
+            "profile" : individu.path,
+            "description" : individu.description
+        }
+        results_list.append(result_dict)
+
+    return JsonResponse(results_list, safe=False)
+
+def count_recent_searches_find(request):
+    # Convertir le paramètre 'intervalle' en entier
+    intervalle_str = request.GET.get('intervalle')
+    try:
+        intervalle = int(intervalle_str)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Invalid intervalle parameter"}, status=400)
+
+    # Calculer le temps actuel moins l'intervalle spécifié
+    time_limit = timezone.now() - timedelta(seconds=intervalle)
+
+    # Récupérer toutes les instances
+    all_searches = IndividualSearchFromCameraStream.objects.all()
+
+    # Initialiser un compteur et une liste pour stocker les informations des individus trouvés
+    count = 0
+    found_individuals = []
+
+    for search in all_searches:
+        # Parcourir chaque detected_time dans chaque instance
+        for detected_time_str in search.detected_time:
+            if isinstance(detected_time_str, str):
+                # Convertir la chaîne de caractères en objet datetime
+                try:
+                    detected_time = datetime.fromisoformat(detected_time_str)
+                    # Comparer avec time_limit
+                    if detected_time >= time_limit:
+                        count += 1
+                        found_individuals.append({
+                            "individu_id": str(search.individu._id),
+                            "individu_description": search.individu.description,
+                            "path": search.individu.path
+                        })
+                        break  # Nous avons trouvé au moins une correspondance récente pour cette instance
+                except ValueError:
+                    # Ignorer les chaînes de caractères mal formées
+                    continue
+
+    # Retourner le nombre d'éléments trouvés et les informations des individus trouvés
+    return JsonResponse({
+        "recently": count,
+        "found_individuals": found_individuals
+    }, safe=False)
 
 """
 
@@ -570,19 +712,15 @@ def video_from_camera1(request):
     else:
         return JsonResponse({'error': 'Method not allowed'}, status=405)"""
 
-"""
-def home(request):
-    camera1 = Camera.objects.get(_id=ObjectId("664f0d92cbae66277a8bfb4f"))
-    camera2 = Camera.objects.get(_id=ObjectId("664f0db8cbae66277a8bfb50"))
-    camera3 = Camera.objects.get(_id=ObjectId("664f0dd3cbae66277a8bfb51"))
-    camera4 = Camera.objects.get(_id=ObjectId("664f0df3cbae66277a8bfb52"))
-    camera5 = Camera.objects.get(_id=ObjectId("664f0e0ecbae66277a8bfb53"))
-    camera6 = Camera.objects.get(_id=ObjectId("664f0e2ccbae66277a8bfb54"))
-    camera7 = Camera.objects.get(_id=ObjectId("664f0ea2cbae66277a8bfb55"))
+def test(request):
+    camera1 = Camera.objects.get(_id=ObjectId("6659a04a97f3f56c717998ba"))
+    camera2 = Camera.objects.get(_id=ObjectId("6659a06b97f3f56c717998bb"))
+    camera3 = Camera.objects.get(_id=ObjectId("6659a0a097f3f56c717998bc"))
+    camera4 = Camera.objects.get(_id=ObjectId("6659a0d897f3f56c717998bd"))
+    camera5 = Camera.objects.get(_id=ObjectId("6659a11a97f3f56c717998be"))
+    camera6 = Camera.objects.get(_id=ObjectId("6659a13f97f3f56c717998bf"))
 
-    ind1Actif = ProfileIndividu.objects.get(_id=ObjectId("664daa18f6e55675dfe8770e"))
-    ind2 = ProfileIndividu.objects.get(_id=ObjectId("664daa18f6e55675dfe8770f"))
-    ind2Act = ProfileIndividu.objects.get(_id=ObjectId("664f3a589c309a9c4b7f9fa9"))
+    ind2Act = ProfileIndividu.objects.get(_id=ObjectId("66549cccaca784d90e3d516f"))
 
 
     recorded_video  = IndividualSearchFromCameraStream.objects.create(
@@ -595,8 +733,30 @@ def home(request):
         camera = camera2
 
      ) 
+    recorded_video  = IndividualSearchFromCameraStream.objects.create(
+        individu = ind2Act,
+        camera = camera3
+
+     )
+    
+    recorded_video  = IndividualSearchFromCameraStream.objects.create(
+        individu = ind2Act,
+        camera = camera4
+
+     ) 
+    recorded_video  = IndividualSearchFromCameraStream.objects.create(
+        individu = ind2Act,
+        camera = camera5
+
+     ) 
+    recorded_video  = IndividualSearchFromCameraStream.objects.create(
+        individu = ind2Act,
+        camera = camera6
+
+     )
     return JsonResponse({'error': 'No form data received'}, status=400)
 
+"""
 
 @csrf_exempt
 def recordedvideo(request):
@@ -821,29 +981,6 @@ def getAllActifSearchFromCameraStream(request):
     
     return JsonResponse(results_list, safe=False)
 
-def get_searches_by_individu(request, individu_id):
-    individu = ProfileIndividu.objects.get(_id=ObjectId(individu_id))
-
-    # Récupérer toutes les entrées de IndividualSearchFromCameraStream pour cet individu
-    searches = IndividualSearchFromCameraStream.objects.filter(individu=individu)
-
-    # Préparer la liste des résultats à renvoyer
-    results_list = []
-    for search in searches:
-        result_dict = {
-            "id": str(search._id),
-            "similarity": search.similarity,
-            "createdAt": search.createdAt.strftime("%Y-%m-%d %H:%M:%S"),
-            "path_frame": search.path_frame,
-            "cameraName": search.camera.name,
-            "long": search.camera.longitude,
-            "lat": search.camera.latitude,
-            "secteur": search.camera.secteur.name,
-            "profile" : individu.path
-        }
-        results_list.append(result_dict)
-
-    return JsonResponse(results_list, safe=False)
  """
 
 """"
@@ -885,7 +1022,7 @@ def getAllProfile(request):
             'status': result.status,
             'description': result.description,
             'path': result.path,
-            'createdAt': result.createdAt,
+            'createdAt': result.createdAt.strftime("%Y-%m-%d %H:%M:%S"),
             "id": str(result._id),
 
         }

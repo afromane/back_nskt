@@ -4,7 +4,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-   path('test', views.video_from_camera1 ),
+   path('test', views.test ),
     path('recordedvideo', views.recordedvideo ),
     path('uploadrecordedvideo', views.upload_recorded_video ),
     path('getRecordedVideoById/<str:itemId>', views.get_recorded_video_by_id ),
@@ -14,9 +14,12 @@ urlpatterns = [
     path('getResultFromRecordedVideo/<str:event_id>', views.getResultFromRecordedVideo),
     path('getFolderContentWithPath', views.get_folder_content_with_path),
     path('loadVideoWithPath',views.serve_video_with_path),
+    path('getAllActifSearchFromCameraStream', views.getAllActifSearchFromCameraStream ),
+    path('searchesIndividuById/<str:individu_id>/', views.get_searches_by_individu),
 
     #path('searchIndividuBySecteur', views.search_individu_by_secteur ),
     path('searchIndividuByCamera', views.search_individu_by_camera ),
+    path('countRecentSearchesFind', views.count_recent_searches_find ),
 
     path('getCameraBySecteurName', views.get_cameras_by_secteur_name ),
     #path('getDayFindFromCamera', views.getDayFindFromCamera ),
@@ -30,8 +33,6 @@ urlpatterns = [
     path('saveProfile', views.saveProfile ),
     path('getAllProfile', views.getAllProfile ),
     path('updateStatus', views.updateStatus ),
-    #path('getAllActifSearchFromCameraStream', views.getAllActifSearchFromCameraStream ),
-    #path('searchesIndividuById/<str:individu_id>/', views.get_searches_by_individu),
 
 
 
