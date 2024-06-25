@@ -5,6 +5,7 @@ from individual_search.models import RecordedVideo as RecordedVideoSearch,Indivi
 from collections import defaultdict
 from setting.models import Camera,Secteur,ContactUrgence
 from django.core.mail import send_mail
+from bson import ObjectId  # Import ObjectId from bson
 
 def send_notification_email(subject, message, recipient_list):
     send_mail(
@@ -14,6 +15,20 @@ def send_notification_email(subject, message, recipient_list):
         recipient_list,
         fail_silently=False,
     )
+def fill_data(request):
+    
+    Camera1 = Camera.objects.get(_id=ObjectId('6654940df906a0e2c240077c'))
+    current_time = datetime.now().strftime("%H-%M-%S")
+
+    violence_event  = ViolenceEventCameraStream.objects.create(
+        violence = 10,
+        path_frame = "",
+        times_detect = current_time,
+        camera = Camera1
+
+    )
+
+    return JsonResponse({'succeess': "cool"}, status=200)
 
 
 def notification(request):
@@ -229,7 +244,7 @@ def getStatistiquesViolence(request):
     # Renvoyer les statistiques
     return JsonResponse({'weeks': stats_by_day_list, 'month': stats_by_week_list, 'year': stats_by_month_list}, safe=False)
 
-
+"""
 
 def get_top5_violence_secteurs_by_week_day_and_week_month(request):
     try:
@@ -289,5 +304,86 @@ def get_top5_violence_secteurs_by_week_day_and_week_month(request):
             stats_by_month_list.append(secteur_stats_by_month)
 
         return JsonResponse({'weeks': stats_by_day_list, 'month': stats_by_week_list, 'year': stats_by_month_list}, safe=False)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+"""
+
+
+def get_top5_violence_secteurs_by_week_day_and_week_month(request):
+    try:
+        today = datetime.now().date()
+        
+        # Calculer les dates de début et de fin de la semaine en cours (de lundi à dimanche)
+        start_of_week = today - timedelta(days=today.weekday())
+        end_of_week = start_of_week + timedelta(days=6)
+        
+        # Calculer les dates de début et de fin du mois en cours (4 semaines)
+        start_of_month = today.replace(day=1)
+        if start_of_month.month == 12:
+            end_of_month = start_of_month.replace(year=start_of_month.year + 1, month=1) - timedelta(days=1)
+        else:
+            end_of_month = start_of_month.replace(month=start_of_month.month + 1) - timedelta(days=1)
+        
+        # Calculer les dates de début et de fin de l'année en cours (12 mois)
+        start_of_year = today.replace(month=1, day=1)
+        end_of_year = datetime(today.year, 12, 31)
+        
+        # Filtrer les événements de violence pour la semaine, le mois et l'année en cours
+        events_week = ViolenceEventCameraStream.objects.filter(createdAt__range=(start_of_week, end_of_week))
+        events_month = ViolenceEventCameraStream.objects.filter(createdAt__range=(start_of_month, end_of_month))
+        events_year = ViolenceEventCameraStream.objects.filter(createdAt__range=(start_of_year, end_of_year))
+        
+        # Dictionnaire pour stocker les données de violence par secteur
+        violence_count_by_secteur = defaultdict(lambda: {
+            'week': [0] * 7, 
+            'month': [0] * 4, 
+            'year': [0] * 12
+        })
+        
+        # Collecter les données de violence par secteur pour la semaine en cours (lundi à dimanche)
+        for event in events_week:
+            if event.camera.secteur:
+                secteur_name = event.camera.secteur.name
+                day_of_week = event.createdAt.weekday()
+                violence_count_by_secteur[secteur_name]['week'][day_of_week] += event.violence
+        
+        # Collecter les données de violence par secteur pour le mois en cours (4 semaines)
+        for event in events_month:
+            if event.camera.secteur:
+                secteur_name = event.camera.secteur.name
+                week_of_month = (event.createdAt.day - 1) // 7
+                violence_count_by_secteur[secteur_name]['month'][week_of_month] += event.violence
+        
+        # Collecter les données de violence par secteur pour l'année en cours (12 mois)
+        for event in events_year:
+            if event.camera.secteur:
+                secteur_name = event.camera.secteur.name
+                month_of_year = event.createdAt.month - 1
+                violence_count_by_secteur[secteur_name]['year'][month_of_year] += event.violence
+        
+        # Fonction pour obtenir le top 5 secteurs pour chaque période
+        def get_top5_sectors(sectors_data, period):
+            return sorted(
+                ((secteur, sum(data[period])) for secteur, data in sectors_data.items()),
+                key=lambda x: x[1], 
+                reverse=True
+            )[:5]
+        
+        # Obtenir les top 5 secteurs pour chaque période
+        top5_secteurs_week = get_top5_sectors(violence_count_by_secteur, 'week')
+        top5_secteurs_month = get_top5_sectors(violence_count_by_secteur, 'month')
+        top5_secteurs_year = get_top5_sectors(violence_count_by_secteur, 'year')
+        
+        # Préparer les données pour chaque secteur dans le format souhaité
+        def prepare_stats(sectors, period):
+            return {secteur: data for secteur, data in sectors}
+        
+        stats_by_week_dict = prepare_stats(top5_secteurs_week, 'week')
+        stats_by_month_dict = prepare_stats(top5_secteurs_month, 'month')
+        stats_by_year_dict = prepare_stats(top5_secteurs_year, 'year')
+        
+        # Renvoyer les statistiques dans le format désiré
+        return JsonResponse({'week': stats_by_week_dict, 'month': stats_by_month_dict, 'year': stats_by_year_dict}, safe=False)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)

@@ -11,7 +11,6 @@ urlpatterns = [
 
     path('getStatistiquesIndividualSearch', views.getStatistiquesIndividualSearch ),
     path('getStatistiquesViolence', views.getStatistiquesViolence ),
-
-    
+    path('filldata', views.fill_data ),
 
 ]

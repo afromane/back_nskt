@@ -97,7 +97,7 @@ DATABASES = {
     'default': {
         'ENGINE': 'djongo',
         'CLIENT': {
-            'host': '192.168.100.8', # Replace with your MongoDB server address
+            'host': '192.168.100.12', # Replace with your MongoDB server address
              #'host': 'localhost', # Replace with your MongoDB server address
             'port': 27017,               # Replace with your MongoDB port if different
             #'username': 'your_username', # Replace with your MongoDB username (optional)
